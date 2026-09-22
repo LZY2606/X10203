@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>关节坐标册</title>
+<style>
+:root { --bg:#0f1420; --panel:#181f2e; --panel2:#1f2839; --line:#2b3650;
+  --text:#e6ebf5; --muted:#93a0b8; --accent:#4ea1ff; --ok:#3fbf7f; --warn:#e6b455;
+  --err:#ef6b6b; --calib:#b98bff; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background:var(--bg); color:var(--text); font-size:13px; }
+header { padding:14px 22px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; }
+header h1 { font-size:19px; margin:0; letter-spacing:2px; }
+header .sub { color:var(--muted); font-size:12px; }
+.wrap { display:grid; grid-template-columns: 340px 1fr; gap:14px; padding:14px 22px; }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+.panel h2 { font-size:14px; margin:0 0 10px; display:flex; justify-content:space-between; align-items:center; }
+label { display:block; color:var(--muted); margin:8px 0 3px; font-size:12px; }
+input, select, textarea, button {
+  font-family:inherit; font-size:12.5px; color:var(--text);
+  background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  padding:6px 9px; width:100%;
+}
+textarea { min-height:120px; font-family:ui-monospace,Menlo,monospace; }
+button { cursor:pointer; width:auto; background:#26314a; }
+button:hover { border-color:var(--accent); }
+button.primary { background:var(--accent); color:#08111f; border-color:var(--accent); font-weight:600; }
+button.warn { background:#5a3d1e; border-color:#8a5a2b; }
+.row { display:flex; gap:8px; align-items:center; }
+.row > * { flex:1; }
+.tag { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; }
+.tag.ok{background:rgba(63,191,127,.15);color:var(--ok)}
+.tag.err{background:rgba(239,107,107,.15);color:var(--err)}
+.tag.warn{background:rgba(230,180,85,.15);color:var(--warn)}
+.tag.calib{background:rgba(185,139,255,.15);color:var(--calib)}
+.muted { color:var(--muted); }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th, td { text-align:left; padding:5px 7px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--muted); font-weight:500; }
+.matrix { font-family:ui-monospace,Menlo,monospace; font-size:11.5px; white-space:pre; }
+.tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+.tabs button { padding:6px 14px; }
+.tabs button.active { background:var(--accent); color:#08111f; border-color:var(--accent); }
+.scroll { max-height:300px; overflow:auto; }
+.candidate { border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:10px; }
+.candidate h3 { margin:0 0 6px; font-size:13px; }
+svg, canvas { display:block; background:#0b101b; border-radius:8px; }
+.badge { font-size:11px; color:var(--muted); }
+.pillset span { display:inline-block; margin:2px 4px 2px 0; }
+#toast { position:fixed; right:20px; bottom:20px; max-width:420px; z-index:99; }
+.toast-item { padding:9px 13px; border-radius:8px; margin-top:8px; border:1px solid var(--line); background:var(--panel2); }
+.toast-item.err { border-color:var(--err); }
+.toast-item.ok { border-color:var(--ok); }
+details summary { cursor:pointer; color:var(--accent); }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.kv { color:var(--muted); }
+.kv b { color:var(--text); font-weight:500; }
+</style>
+</head>
+<body>
+<header>
+  <h1>关节坐标册</h1>
+  <span class="sub">URDF × 标定 × 现场快照 — 任意两 frame 的姿态溯源</span>
+  <span class="badge" style="margin-left:auto">Kotlin / Ktor / SQLite（不连接真实机器人）</span>
+</header>
+<div class="wrap">
+  <div>
+    <div class="panel">
+      <h2>1. 机器人与 URDF</h2>
+      <label>机器人序列号</label>
+      <input id="robotSerial" value="SN-ARM-001"/>
+      <label>名称（可选）</label>
+      <input id="robotName" placeholder="六轴演示臂"/>
+      <label>URDF XML（未知元素/属性将原样保留）</label>
+      <textarea id="urdfXml"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" onclick="importRobot()">导入</button>
+        <button onclick="loadSample('sample')">载入示例：闭合环</button>
+        <button onclick="loadSample('mimic')">载入示例：mimic</button>
+      </div>
+      <label style="margin-top:10px">已导入机器人</label>
+      <select id="robotSelect" onchange="selectRobot()"></select>
+      <div class="row" style="margin-top:8px">
+        <button onclick="exportUrdf()">导出派生 URDF（仅获批补丁）</button>
+      </div>
+      <div id="importIssues" style="margin-top:8px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>2. 现场关节快照</h2>
+      <label>快照名</label>
+      <input id="snapLabel" value="现场-1号工位"/>
+      <label>采集时刻（ISO-8601，留空=无时间）</label>
+      <input id="snapTime" placeholder="2026-09-22T10:00:00Z"/>
+      <label>关节值（JSON：{&quot;joint&quot;:{&quot;value&quot;:30,&quot;unit&quot;:&quot;deg&quot;}}）</label>
+      <textarea id="snapValues" style="min-height:80px">{"j1":{"value":30,"unit":"deg"}}</textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" onclick="createSnapshot()">创建快照</button>
+      </div>
+      <div class="scroll" style="margin-top:8px">
+        <table><thead><tr><th>#</th><th>名称</th><th>时刻</th><th>冻结</th><th></th></tr></thead>
+        <tbody id="snapTable"></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>3. 标定变换（独立版本化）</h2>
+      <label>标定 id（同一边的多版本共用 id）</label>
+      <input id="calibId" value="base-correction"/>
+      <label>parent / child frame</label>
+      <div class="row">
+        <input id="calibParent" value="base"/>
+        <input id="calibChild" value="l0"/>
+      </div>
+      <label>xyz（米）</label>
+      <input id="calibXyz" value="0, 0, 0.002"/>
+      <label>rpy（弧度）</label>
+      <input id="calibRpy" value="0, 0, 0"/>
+      <div class="grid2">
+        <div><label>生效起点（含）</label><input id="calibFrom" placeholder="2026-09-01T00:00:00Z"/></div>
+        <div><label>生效终点（不含）</label><input id="calibTo" placeholder="2026-10-01T00:00:00Z"/></div>
+      </div>
+      <div class="row">
+        <div><label>乐观锁基线版本</label><input id="calibBaseVer" type="number" value="0"/></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" onclick="saveDraft()">保存草案</button>
+        <button onclick="loadCalibs()">刷新列表</button>
+      </div>
+      <div class="scroll" style="margin-top:8px">
+        <table><thead><tr><th>id@ver</th><th>边</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="calibTable"></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <div class="tabs">
+        <button id="tab-graph" class="active" onclick="showTab('graph')">link/joint 图</button>
+        <button id="tab-axes" onclick="showTab('axes')">三维坐标轴简图</button>
+        <button id="tab-cycle" onclick="showTab('cycle')">环路残差</button>
+        <button id="tab-diff" onclick="showTab('diff')">版本差异</button>
+      </div>
+      <div id="view-graph"><svg id="graphSvg" width="100%" height="420"></svg></div>
+      <div id="view-axes" style="display:none">
+        <div class="row" style="margin-bottom:8px">
+          <select id="axisFrame" style="max-width:220px"></select>
+          <span class="muted">红=X，绿=Y，蓝=Z（在选定查询结果的 from 坐标系下）</span>
+        </div>
+        <canvas id="axesCanvas" width="900" height="430"></canvas>
+      </div>
+      <div id="view-cycle" style="display:none"><div id="cycleView"></div></div>
+      <div id="view-diff" style="display:none"><div id="diffView" class="muted">先执行一次带“比较标定”的查询。</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>4. 坐标查询 <span class="badge">完整链 · 关节值 · 单位 · 矩阵 · 来源 · 多候选</span></h2>
+      <div class="row">
+        <div><label>from frame</label><input id="qFrom" value="base"/></div>
+        <div><label>to frame</label><input id="qTo" value="l3"/></div>
+        <div><label>使用快照</label><select id="qSnap"><option value="">（不用）</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>标定版本 A（id 或 id@ver，逗号分隔，留空=最新获批）</label>
+          <input id="qCalibA" placeholder="base-correction@3"/></div>
+        <div><label>比较标定 B（可选）</label>
+          <input id="qCalibB" placeholder="base-correction@2"/></div>
+        <div><label>B 用快照（可选）</label><select id="qSnapB"><option value="">（同 A）</option></select></div>
+      </div>
+      <label>临时关节值（JSON，与快照合并覆盖）</label>
+      <textarea id="qValues" style="min-height:60px">{}</textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" onclick="runQuery()">查询 / 比较</button>
+        <button onclick="refreshAll()">刷新</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>查询结果</h2>
+      <div id="queryResult"><div class="muted">尚未查询。</div></div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

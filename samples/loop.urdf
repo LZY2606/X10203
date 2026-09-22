@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<robot name="loop-arm">
+  <link name="base"/>
+  <link name="l0"/>
+  <link name="l1"/>
+  <link name="l2"/>
+  <link name="l3"/>
+  <joint name="j0" type="fixed">
+    <origin xyz="0 0 0"/>
+    <parent link="base"/><child link="l0"/>
+  </joint>
+  <joint name="j1" type="revolute">
+    <origin xyz="0.1 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+    <parent link="l0"/><child link="l1"/>
+  </joint>
+  <joint name="j2" type="revolute">
+    <origin xyz="0.2 0 0"/>
+    <axis xyz="0 0 1"/>
+    <mimic joint="j1" multiplier="0.5" offset="0"/>
+    <parent link="l1"/><child link="l2"/>
+  </joint>
+  <joint name="j3" type="fixed">
+    <origin xyz="0.3 0 0"/>
+    <parent link="l2"/><child link="l3"/>
+  </joint>
+  <joint name="j_loop" type="fixed">
+    <origin xyz="-0.6 0 0"/>
+    <parent link="l3"/><child link="base"/>
+  </joint>
+</robot>
