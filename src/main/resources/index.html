@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>关节坐标册</title>
+<style>
+  :root { --bg:#0f1420; --panel:#18202f; --ink:#e7ecf5; --muted:#93a0b5;
+          --accent:#5aa7ff; --ok:#3fbf7f; --warn:#e8b341; --err:#ef6b6b; --line:#2a3448; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background:var(--bg); color:var(--ink); }
+  header { padding:14px 22px; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:20px; margin:0; letter-spacing:2px; }
+  header .sub { color:var(--muted); font-size:12px; }
+  select, input, button, textarea { background:#101724; color:var(--ink);
+      border:1px solid var(--line); border-radius:6px; padding:6px 9px; font-size:13px; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#081322; border-color:var(--accent); font-weight:600; }
+  main { display:grid; grid-template-columns: 380px 1fr 420px; gap:12px; padding:12px; }
+  .col { display:flex; flex-direction:column; gap:12px; min-width:0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .card h2 { font-size:14px; margin:0 0 8px; color:var(--accent); }
+  .muted { color:var(--muted); font-size:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left;
+           vertical-align:top; word-break:break-word; }
+  th { color:var(--muted); font-weight:500; }
+  .matrix { font-family:ui-monospace,Menlo,monospace; font-size:11px; white-space:pre; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:99px; font-size:11px; }
+  .tag.ok { background:rgba(63,191,127,.15); color:var(--ok); }
+  .tag.warn { background:rgba(232,179,65,.15); color:var(--warn); }
+  .tag.err { background:rgba(239,107,107,.15); color:var(--err); }
+  .tag.info { background:rgba(90,167,255,.15); color:var(--accent); }
+  #graphSvg, #axis3d { width:100%; background:#0b101a; border-radius:8px; display:block; }
+  .scroll { max-height:300px; overflow:auto; }
+  details { margin:6px 0; }
+  summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .cand { border:1px solid var(--line); border-radius:8px; padding:8px; margin:6px 0; }
+  .cand.chosen { border-color:var(--accent); }
+  .mono { font-family:ui-monospace,Menlo,monospace; }
+  .errText { color:var(--err); } .okText { color:var(--ok); } .warnText { color:var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>关节坐标册</h1>
+  <span class="sub">URDF × 标定 × 现场快照 — 任意 frame 间姿态的完整定义链</span>
+  <span style="flex:1"></span>
+  <label class="muted">机器人
+    <select id="robotSel"></select>
+  </label>
+  <label class="muted">标定版本
+    <select id="calibSel"><option value="">按时间自动生效</option></select>
+  </label>
+  <label class="muted">时刻 <input id="atTime" type="datetime-local" step="1"/></label>
+  <button class="primary" onclick="loadRobot()">载入</button>
+</header>
+<main>
+  <div class="col">
+    <div class="card">
+      <h2>Link / Joint 图</h2>
+      <svg id="graphSvg" height="320" viewBox="0 0 340 320"></svg>
+      <div class="muted" id="graphLegend"></div>
+    </div>
+    <div class="card">
+      <h2>解析与结构状态</h2>
+      <div id="issues" class="scroll"></div>
+    </div>
+    <div class="card">
+      <h2>环路残差 / 最小矛盾边集</h2>
+      <div id="loops" class="scroll"></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h2>坐标查询（完整链 · 关节值 · 单位 · 矩阵 · 来源）</h2>
+      <div class="row">
+        <select id="fromFrame"></select> → <select id="toFrame"></select>
+        <button class="primary" onclick="runQuery()">查询</button>
+      </div>
+      <div class="row muted">
+        关节角度单位：<select id="angleUnit"><option value="rad">rad</option><option value="deg">deg</option></select>
+      </div>
+      <div id="jointInputs" class="scroll"></div>
+      <div id="queryResult"></div>
+    </div>
+    <div class="card">
+      <h2>现场快照与跨标定比较</h2>
+      <div class="row">
+        <input id="snapLabel" placeholder="快照标签" value="现场快照 A"/>
+        <button onclick="freezeSnapshot()">冻结当前关节值</button>
+      </div>
+      <div class="row">
+        <select id="snapSel"></select>
+        <select id="otherCalibSel"></select>
+        <button onclick="compareSnapshot()">冻结快照 × 另一套标定</button>
+      </div>
+      <div id="snapshotList" class="scroll"></div>
+      <div id="compareResult"></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h2>三维坐标轴简图</h2>
+      <canvas id="axis3d" width="380" height="300"></canvas>
+      <div class="muted">红=X 绿=Y 蓝=Z（虚线=父 frame）。拖动可旋转视角。</div>
+      <div class="row">
+        <button onclick="drawAxes(0)">原点</button>
+        <button onclick="drawAxesFromChosen()">采用选中查询结果</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>标定版本与差异</h2>
+      <div id="calibList" class="scroll"></div>
+      <div class="row">
+        <select id="diffTarget"></select>
+        <button onclick="runDiff()">版本差异</button>
+        <button onclick="renderDraftEditor()">新建草案</button>
+      </div>
+      <div id="diffResult"></div>
+      <details id="draftBox" style="display:none"><summary>编辑草案（版本号并发控制）</summary>
+        <div class="row">备注 <input id="draftNote" value="现场修正"/></div>
+        <div class="row">生效 <input id="draftFrom" type="datetime-local" step="1"/></div>
+        <div class="row">失效 <input id="draftUntil" type="datetime-local" step="1"/></div>
+        <textarea id="draftEdges" rows="8" style="width:100%"
+          placeholder='[{"id":"e1","kind":"override","jointName":"j2","parentFrame":"L1","childFrame":"L2","xyz":[0.1,0,0],"rpyRad":[0,0,0],"note":""}]'></textarea>
+        <div class="row"><button class="primary" onclick="saveDraft()">提交草案</button></div>
+        <div class="muted" id="draftMsg"></div>
+      </details>
+    </div>
+    <div class="card">
+      <h2>获批补丁与保真导出</h2>
+      <div id="patchList" class="scroll"></div>
+      <div class="row">
+        <select id="patchEdgeSel" multiple style="height:70px;min-width:220px"></select>
+      </div>
+      <div class="row">
+        <button onclick="createPatch()">登记补丁（默认未批）</button>
+        <button onclick="exportXml()">预览派生 XML</button>
+      </div>
+      <pre id="exportPreview" class="scroll mono" style="white-space:pre-wrap;max-height:240px"></pre>
+    </div>
+  </div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
